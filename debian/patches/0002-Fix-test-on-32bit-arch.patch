@@ -1,0 +1,22 @@
+From: Shengjing Zhu <zhsj@debian.org>
+Date: Tue, 22 Feb 2022 23:39:56 +0800
+Subject: Fix test on 32bit arch
+
+Forwarded: https://github.com/vishvananda/netlink/pull/737
+---
+ xfrm_policy_test.go | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/xfrm_policy_test.go b/xfrm_policy_test.go
+index afc638e..143f85c 100644
+--- a/xfrm_policy_test.go
++++ b/xfrm_policy_test.go
+@@ -280,7 +280,7 @@ func getPolicy() *XfrmPolicy {
+ 		Dst:   net.ParseIP("127.0.0.2"),
+ 		Proto: XFRM_PROTO_ESP,
+ 		Mode:  XFRM_MODE_TUNNEL,
+-		Spi:   0xabcdef99,
++		Spi:   0x1bcdef99,
+ 	}
+ 	policy.Tmpls = append(policy.Tmpls, tmpl)
+ 	return policy
