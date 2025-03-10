@@ -26,8 +26,6 @@ Forwarded: not-needed
  socket_test.go | 1 +
  2 files changed, 2 insertions(+), 1 deletion(-)
 
-diff --git a/handle_test.go b/handle_test.go
-index ac627ba..b6ef7a6 100644
 --- a/handle_test.go
 +++ b/handle_test.go
 @@ -1,4 +1,4 @@
@@ -36,11 +34,9 @@ index ac627ba..b6ef7a6 100644
  
  package netlink
  
-diff --git a/socket_test.go b/socket_test.go
-index f21520f..2bcd540 100644
 --- a/socket_test.go
 +++ b/socket_test.go
-@@ -59,6 +59,7 @@ func TestSocketGet(t *testing.T) {
+@@ -131,6 +131,7 @@
  }
  
  func TestSocketDiagTCPInfo(t *testing.T) {
@@ -48,3 +44,29 @@ index f21520f..2bcd540 100644
  	Family4 := uint8(syscall.AF_INET)
  	Family6 := uint8(syscall.AF_INET6)
  	families := []uint8{Family4, Family6}
+@@ -149,6 +150,7 @@
+ }
+ 
+ func TestSocketDiagUDPnfo(t *testing.T) {
++	t.Skip("broken on buildd")
+ 	for _, want := range []uint8{syscall.AF_INET, syscall.AF_INET6} {
+ 		result, err := SocketDiagUDPInfo(want)
+ 		if err != nil {
+@@ -164,6 +166,7 @@
+ }
+ 
+ func TestUnixSocketDiagInfo(t *testing.T) {
++	t.Skip("broken on buildd")
+ 	want := syscall.AF_UNIX
+ 	result, err := UnixSocketDiagInfo()
+ 	if err != nil {
+--- a/socket_xdp_linux_test.go
++++ b/socket_xdp_linux_test.go
+@@ -11,6 +11,7 @@
+ )
+ 
+ func TestSocketXDPGetInfo(t *testing.T) {
++	t.Skip("broken on buildd")
+ 	xdpsockfd, err := unix.Socket(unix.AF_XDP, unix.SOCK_RAW, 0)
+ 	if err != nil {
+ 		t.Fatal(err)

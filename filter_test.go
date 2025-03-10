@@ -7,6 +7,7 @@ import (
 	"net"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
@@ -510,6 +511,135 @@ func TestFilterFwAddDel(t *testing.T) {
 	}
 }
 
+func TestFilterFwActAddDel(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+	if err := LinkAdd(&Ifb{LinkAttrs{Name: "foo"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := LinkAdd(&Ifb{LinkAttrs{Name: "bar"}}); err != nil {
+		t.Fatal(err)
+	}
+	link, err := LinkByName("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+	redir, err := LinkByName("bar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := LinkSetUp(redir); err != nil {
+		t.Fatal(err)
+	}
+	qdisc := &Ingress{
+		QdiscAttrs: QdiscAttrs{
+			LinkIndex: link.Attrs().Index,
+			Handle:    MakeHandle(0xffff, 0),
+			Parent:    HANDLE_INGRESS,
+		},
+	}
+	if err := QdiscAdd(qdisc); err != nil {
+		t.Fatal(err)
+	}
+	qdiscs, err := SafeQdiscList(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(qdiscs) != 1 {
+		t.Fatal("Failed to add qdisc")
+	}
+	_, ok := qdiscs[0].(*Ingress)
+	if !ok {
+		t.Fatal("Qdisc is the wrong type")
+	}
+
+	classId := MakeHandle(1, 1)
+	filter := &FwFilter{
+		FilterAttrs: FilterAttrs{
+			LinkIndex: link.Attrs().Index,
+			Parent:    MakeHandle(0xffff, 0),
+			Priority:  1,
+			Protocol:  unix.ETH_P_ALL,
+			Handle:    MakeHandle(0, 0x6),
+		},
+		ClassId: classId,
+		Actions: []Action{
+			&MirredAction{
+				ActionAttrs: ActionAttrs{
+					Action: TC_ACT_STOLEN,
+				},
+				MirredAction: TCA_EGRESS_REDIR,
+				Ifindex:      redir.Attrs().Index,
+			},
+		},
+	}
+
+	if err := FilterAdd(filter); err != nil {
+		t.Fatal(err)
+	}
+
+	filters, err := FilterList(link, MakeHandle(0xffff, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 1 {
+		t.Fatal("Failed to add filter")
+	}
+	fw, ok := filters[0].(*FwFilter)
+	if !ok {
+		t.Fatal("Filter is the wrong type")
+	}
+
+	if len(fw.Actions) != 1 {
+		t.Fatalf("Too few Actions in filter")
+	}
+	if fw.ClassId != classId {
+		t.Fatalf("ClassId of the filter is the wrong value")
+	}
+
+	mia, ok := fw.Actions[0].(*MirredAction)
+	if !ok {
+		t.Fatal("Unable to find mirred action")
+	}
+
+	if mia.Attrs().Action != TC_ACT_STOLEN {
+		t.Fatal("Mirred action isn't TC_ACT_STOLEN")
+	}
+
+	if mia.MirredAction != TCA_EGRESS_REDIR {
+		t.Fatal("MirredAction isn't TCA_EGRESS_REDIR")
+	}
+
+	if mia.Ifindex != redir.Attrs().Index {
+		t.Fatal("Unmatched redirect index")
+	}
+
+	if err := FilterDel(filter); err != nil {
+		t.Fatal(err)
+	}
+	filters, err = FilterList(link, MakeHandle(0xffff, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 0 {
+		t.Fatal("Failed to remove filter")
+	}
+
+	if err := QdiscDel(qdisc); err != nil {
+		t.Fatal(err)
+	}
+	qdiscs, err = SafeQdiscList(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(qdiscs) != 0 {
+		t.Fatal("Failed to remove qdisc")
+	}
+}
+
 func TestFilterU32BpfAddDel(t *testing.T) {
 	t.Skipf("Fd does not match in ci")
 	tearDown := setUpNetlinkTest(t)
@@ -785,6 +915,135 @@ func TestFilterU32ConnmarkAddDel(t *testing.T) {
 	}
 }
 
+func TestFilterU32CsumAddDel(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+	if err := LinkAdd(&Ifb{LinkAttrs{Name: "foo"}}); err != nil {
+		t.Fatalf("add link foo error: %v", err)
+	}
+	link, err := LinkByName("foo")
+	if err != nil {
+		t.Fatalf("add link foo error: %v", err)
+	}
+	if err := LinkSetUp(link); err != nil {
+		t.Fatalf("set foo link up error: %v", err)
+	}
+
+	qdisc := &Ingress{
+		QdiscAttrs: QdiscAttrs{
+			LinkIndex: link.Attrs().Index,
+			Handle:    MakeHandle(0xffff, 0),
+			Parent:    HANDLE_INGRESS,
+		},
+	}
+	if err := QdiscAdd(qdisc); err != nil {
+		t.Fatal(err)
+	}
+	qdiscs, err := SafeQdiscList(link)
+	if err != nil {
+		t.Fatalf("get qdisc error: %v", err)
+	}
+
+	found := false
+	for _, v := range qdiscs {
+		if _, ok := v.(*Ingress); ok {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("Qdisc is the wrong type")
+	}
+
+	classId := MakeHandle(1, 1)
+	filter := &U32{
+		FilterAttrs: FilterAttrs{
+			LinkIndex: link.Attrs().Index,
+			Parent:    MakeHandle(0xffff, 0),
+			Priority:  1,
+			Protocol:  unix.ETH_P_ALL,
+		},
+		ClassId: classId,
+		Actions: []Action{
+			&CsumAction{
+				ActionAttrs: ActionAttrs{
+					Action: TC_ACT_PIPE,
+				},
+				UpdateFlags: TCA_CSUM_UPDATE_FLAG_TCP,
+			},
+		},
+	}
+
+	if err := FilterAdd(filter); err != nil {
+		t.Fatal(err)
+	}
+
+	filters, err := FilterList(link, MakeHandle(0xffff, 0))
+	if err != nil {
+		t.Fatalf("get filter error: %v", err)
+	}
+
+	if len(filters) != 1 {
+		t.Fatalf("the count filters error, expect: 1, acutal: %d", len(filters))
+	}
+
+	ft, ok := filters[0].(*U32)
+	if !ok {
+		t.Fatal("Filter is the wrong type")
+	}
+
+	if ft.LinkIndex != link.Attrs().Index {
+		t.Fatal("link index error")
+	}
+
+	if len(ft.Actions) != 1 {
+		t.Fatalf("filter has wrong number of actions, expect: 1, acutal: %d", len(filters))
+	}
+
+	csum, ok := ft.Actions[0].(*CsumAction)
+	if !ok {
+		t.Fatal("action is the wrong type")
+	}
+
+	if csum.Attrs().Action != TC_ACT_PIPE {
+		t.Fatal("Csum action isn't TC_ACT_PIPE")
+	}
+
+	if csum.UpdateFlags != TCA_CSUM_UPDATE_FLAG_TCP {
+		t.Fatalf("Csum action isn't TCA_CSUM_UPDATE_FLAG_TCP, got %d", csum.UpdateFlags)
+	}
+
+	if err := FilterDel(ft); err != nil {
+		t.Fatal(err)
+	}
+	filters, err = FilterList(link, MakeHandle(0xffff, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 0 {
+		t.Fatal("Failed to remove filter")
+	}
+
+	if err := QdiscDel(qdisc); err != nil {
+		t.Fatal(err)
+	}
+	qdiscs, err = SafeQdiscList(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found = false
+	for _, v := range qdiscs {
+		if _, ok := v.(*Ingress); ok {
+			found = true
+			break
+		}
+	}
+	if found {
+		t.Fatal("Failed to remove qdisc")
+	}
+}
+
 func setupLinkForTestWithQdisc(t *testing.T, linkName string) (Qdisc, Link) {
 	if err := LinkAdd(&Ifb{LinkAttrs{Name: linkName}}); err != nil {
 		t.Fatal(err)
@@ -796,14 +1055,12 @@ func setupLinkForTestWithQdisc(t *testing.T, linkName string) (Qdisc, Link) {
 	if err := LinkSetUp(link); err != nil {
 		t.Fatal(err)
 	}
-	attrs := QdiscAttrs{
-		LinkIndex: link.Attrs().Index,
-		Handle:    MakeHandle(0xffff, 0),
-		Parent:    HANDLE_CLSACT,
-	}
-	qdisc := &GenericQdisc{
-		QdiscAttrs: attrs,
-		QdiscType:  "clsact",
+	qdisc := &Clsact{
+		QdiscAttrs: QdiscAttrs{
+			LinkIndex: link.Attrs().Index,
+			Handle:    MakeHandle(0xffff, 0),
+			Parent:    HANDLE_CLSACT,
+		},
 	}
 
 	if err := QdiscAdd(qdisc); err != nil {
@@ -816,7 +1073,7 @@ func setupLinkForTestWithQdisc(t *testing.T, linkName string) (Qdisc, Link) {
 	if len(qdiscs) != 1 {
 		t.Fatal("Failed to add qdisc", len(qdiscs))
 	}
-	if q, ok := qdiscs[0].(*GenericQdisc); !ok || q.Type() != "clsact" {
+	if q, ok := qdiscs[0].(*Clsact); !ok || q.Type() != "clsact" {
 		t.Fatal("qdisc is the wrong type")
 	}
 	return qdiscs[0], link
@@ -1198,6 +1455,8 @@ func TestFilterU32SkbEditAddDel(t *testing.T) {
 	skbedit.Priority = &priority
 	mark := uint32(0xfe)
 	skbedit.Mark = &mark
+	mask := uint32(0xff)
+	skbedit.Mask = &mask
 	mapping := uint16(0xf)
 	skbedit.QueueMapping = &mapping
 
@@ -1265,6 +1524,9 @@ func TestFilterU32SkbEditAddDel(t *testing.T) {
 	}
 	if edit.Mark == nil || *edit.Mark != *skbedit.Mark {
 		t.Fatal("Action Mark doesn't match")
+	}
+	if edit.Mask == nil || *edit.Mask != *skbedit.Mask {
+		t.Fatal("Action Mask doesn't match")
 	}
 	if edit.Priority == nil || *edit.Priority != *skbedit.Priority {
 		t.Fatal("Action Priority doesn't match")
@@ -1507,6 +1769,9 @@ func TestFilterFlowerAddDel(t *testing.T) {
 
 	testMask := net.CIDRMask(24, 32)
 
+	ipproto := new(nl.IPProto)
+	*ipproto = nl.IPPROTO_TCP
+
 	filter := &Flower{
 		FilterAttrs: FilterAttrs{
 			LinkIndex: link.Attrs().Index,
@@ -1525,6 +1790,9 @@ func TestFilterFlowerAddDel(t *testing.T) {
 		EncSrcIPMask:  testMask,
 		EncDestPort:   8472,
 		EncKeyId:      1234,
+		IPProto:       ipproto,
+		DestPort:      1111,
+		SrcPort:       1111,
 		Actions: []Action{
 			&MirredAction{
 				ActionAttrs: ActionAttrs{
@@ -1533,6 +1801,12 @@ func TestFilterFlowerAddDel(t *testing.T) {
 				MirredAction: TCA_EGRESS_REDIR,
 				Ifindex:      redir.Attrs().Index,
 			},
+			&GenericAction{
+				ActionAttrs: ActionAttrs{
+					Action: getTcActGotoChain(),
+				},
+				Chain: 20,
+			},
 		},
 	}
 
@@ -1540,6 +1814,7 @@ func TestFilterFlowerAddDel(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	time.Sleep(time.Second)
 	filters, err := FilterList(link, MakeHandle(0xffff, 0))
 	if err != nil {
 		t.Fatal(err)
@@ -1587,6 +1862,15 @@ func TestFilterFlowerAddDel(t *testing.T) {
 	if filter.EncDestPort != flower.EncDestPort {
 		t.Fatalf("Flower EncDestPort doesn't match")
 	}
+	if flower.IPProto == nil || *filter.IPProto != *flower.IPProto {
+		t.Fatalf("Flower IPProto doesn't match")
+	}
+	if filter.DestPort != flower.DestPort {
+		t.Fatalf("Flower DestPort doesn't match")
+	}
+	if filter.SrcPort != flower.SrcPort {
+		t.Fatalf("Flower SrcPort doesn't match")
+	}
 
 	mia, ok := flower.Actions[0].(*MirredAction)
 	if !ok {
@@ -1595,6 +1879,191 @@ func TestFilterFlowerAddDel(t *testing.T) {
 
 	if mia.Attrs().Action != TC_ACT_STOLEN {
 		t.Fatal("Mirred action isn't TC_ACT_STOLEN")
+	}
+
+	if mia.Timestamp == nil || mia.Timestamp.Installed == 0 {
+		t.Fatal("Incorrect mirred action timestamp")
+	}
+
+	if mia.Statistics == nil {
+		t.Fatal("Incorrect mirred action stats")
+	}
+
+	ga, ok := flower.Actions[1].(*GenericAction)
+	if !ok {
+		t.Fatal("Unable to find generic action")
+	}
+
+	if ga.Attrs().Action != getTcActGotoChain() {
+		t.Fatal("Generic action isn't TC_ACT_GOTO_CHAIN")
+	}
+
+	if ga.Timestamp == nil || ga.Timestamp.Installed == 0 {
+		t.Fatal("Incorrect generic action timestamp")
+	}
+
+	if ga.Statistics == nil {
+		t.Fatal("Incorrect generic action stats")
+	}
+
+	if err := FilterDel(filter); err != nil {
+		t.Fatal(err)
+	}
+	filters, err = FilterList(link, MakeHandle(0xffff, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 0 {
+		t.Fatal("Failed to remove filter")
+	}
+
+	if err := QdiscDel(qdisc); err != nil {
+		t.Fatal(err)
+	}
+	qdiscs, err = SafeQdiscList(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found = false
+	for _, v := range qdiscs {
+		if _, ok := v.(*Ingress); ok {
+			found = true
+			break
+		}
+	}
+	if found {
+		t.Fatal("Failed to remove qdisc")
+	}
+}
+
+func TestFilterIPv6FlowerPedit(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+	if err := LinkAdd(&Ifb{LinkAttrs{Name: "foo"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := LinkAdd(&Ifb{LinkAttrs{Name: "bar"}}); err != nil {
+		t.Fatal(err)
+	}
+	link, err := LinkByName("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+	redir, err := LinkByName("bar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := LinkSetUp(redir); err != nil {
+		t.Fatal(err)
+	}
+
+	qdisc := &Ingress{
+		QdiscAttrs: QdiscAttrs{
+			LinkIndex: link.Attrs().Index,
+			Handle:    MakeHandle(0xffff, 0),
+			Parent:    HANDLE_INGRESS,
+		},
+	}
+	if err := QdiscAdd(qdisc); err != nil {
+		t.Fatal(err)
+	}
+	qdiscs, err := SafeQdiscList(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, v := range qdiscs {
+		if _, ok := v.(*Ingress); ok {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("Qdisc is the wrong type")
+	}
+
+	testMask := net.CIDRMask(64, 128)
+
+	ipproto := new(nl.IPProto)
+	*ipproto = nl.IPPROTO_TCP
+
+	filter := &Flower{
+		FilterAttrs: FilterAttrs{
+			LinkIndex: link.Attrs().Index,
+			Parent:    MakeHandle(0xffff, 0),
+			Priority:  1,
+			Protocol:  unix.ETH_P_ALL,
+		},
+		DestIP:     net.ParseIP("ffff::fff1"),
+		DestIPMask: testMask,
+		EthType:    unix.ETH_P_IPV6,
+		IPProto:    ipproto,
+		DestPort:   6666,
+		Actions:    []Action{},
+	}
+
+	peditAction := NewPeditAction()
+	peditAction.Proto = uint8(nl.IPPROTO_TCP)
+	peditAction.SrcPort = 7777
+	peditAction.SrcIP = net.ParseIP("ffff::fff2")
+	filter.Actions = append(filter.Actions, peditAction)
+
+	miaAction := &MirredAction{
+		ActionAttrs: ActionAttrs{
+			Action: TC_ACT_REDIRECT,
+		},
+		MirredAction: TCA_EGRESS_REDIR,
+		Ifindex:      redir.Attrs().Index,
+	}
+	filter.Actions = append(filter.Actions, miaAction)
+
+	if err := FilterAdd(filter); err != nil {
+		t.Fatal(err)
+	}
+
+	filters, err := FilterList(link, MakeHandle(0xffff, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 1 {
+		t.Fatal("Failed to add filter")
+	}
+	flower, ok := filters[0].(*Flower)
+	if !ok {
+		t.Fatal("Filter is the wrong type")
+	}
+
+	if filter.EthType != flower.EthType {
+		t.Fatalf("Flower EthType doesn't match")
+	}
+	if !filter.DestIP.Equal(flower.DestIP) {
+		t.Fatalf("Flower DestIP doesn't match")
+	}
+
+	if !reflect.DeepEqual(filter.DestIPMask, testMask) {
+		t.Fatalf("Flower DestIPMask doesn't match")
+	}
+
+	if flower.IPProto == nil || *filter.IPProto != *flower.IPProto {
+		t.Fatalf("Flower IPProto doesn't match")
+	}
+	if filter.DestPort != flower.DestPort {
+		t.Fatalf("Flower DestPort doesn't match")
+	}
+
+	_, ok = flower.Actions[0].(*PeditAction)
+	if !ok {
+		t.Fatal("Unable to find pedit action")
+	}
+
+	_, ok = flower.Actions[1].(*MirredAction)
+	if !ok {
+		t.Fatal("Unable to find mirred action")
 	}
 
 	if err := FilterDel(filter); err != nil {
@@ -1803,6 +2272,202 @@ func TestFilterU32PoliceAddDel(t *testing.T) {
 		}
 	}
 	if found {
+		t.Fatal("Failed to remove qdisc")
+	}
+}
+
+func TestFilterU32DirectPoliceAddDel(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+	if err := LinkAdd(&Ifb{LinkAttrs{Name: "foo"}}); err != nil {
+		t.Fatal(err)
+	}
+	link, err := LinkByName("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+
+	qdisc := &Ingress{
+		QdiscAttrs: QdiscAttrs{
+			LinkIndex: link.Attrs().Index,
+			Handle:    MakeHandle(0xffff, 0),
+			Parent:    HANDLE_INGRESS,
+		},
+	}
+	if err := QdiscAdd(qdisc); err != nil {
+		t.Fatal(err)
+	}
+
+	const (
+		policeRate     = 0x40000000 // 1 Gbps
+		policeBurst    = 0x19000    // 100 KB
+		policePeakRate = 0x4000     // 16 Kbps
+	)
+
+	police := NewPoliceAction()
+	police.Rate = policeRate
+	police.PeakRate = policePeakRate
+	police.Burst = policeBurst
+	police.ExceedAction = TC_POLICE_SHOT
+	police.NotExceedAction = TC_POLICE_UNSPEC
+
+	classId := MakeHandle(1, 1)
+	filter := &U32{
+		FilterAttrs: FilterAttrs{
+			LinkIndex: link.Attrs().Index,
+			Parent:    MakeHandle(0xffff, 0),
+			Priority:  1,
+			Protocol:  unix.ETH_P_ALL,
+		},
+		ClassId: classId,
+		Police:  police,
+	}
+
+	if err := FilterAdd(filter); err != nil {
+		t.Fatal(err)
+	}
+
+	filters, err := FilterList(link, MakeHandle(0xffff, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 1 {
+		t.Fatal("Failed to add filter")
+	}
+	u32, ok := filters[0].(*U32)
+	if !ok {
+		t.Fatal("Filter is the wrong type")
+	}
+
+	if u32.Police == nil {
+		t.Fatalf("No police in filter")
+	}
+
+	if u32.Police.Rate != policeRate {
+		t.Fatal("Filter Rate doesn't match")
+	}
+
+	if u32.Police.PeakRate != policePeakRate {
+		t.Fatal("Filter PeakRate doesn't match")
+	}
+
+	if u32.Police.LinkLayer != nl.LINKLAYER_ETHERNET {
+		t.Fatal("Filter LinkLayer doesn't match")
+	}
+
+	if err := QdiscDel(qdisc); err != nil {
+		t.Fatal(err)
+	}
+	qdiscs, err := SafeQdiscList(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, v := range qdiscs {
+		if _, ok := v.(*Ingress); ok {
+			found = true
+			break
+		}
+	}
+	if found {
+		t.Fatal("Failed to remove qdisc")
+	}
+}
+
+func TestFilterChainAddDel(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+	if err := LinkAdd(&Ifb{LinkAttrs{Name: "foo"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := LinkAdd(&Ifb{LinkAttrs{Name: "bar"}}); err != nil {
+		t.Fatal(err)
+	}
+	link, err := LinkByName("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+	redir, err := LinkByName("bar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := LinkSetUp(redir); err != nil {
+		t.Fatal(err)
+	}
+	qdisc := &Ingress{
+		QdiscAttrs: QdiscAttrs{
+			LinkIndex: link.Attrs().Index,
+			Handle:    MakeHandle(0xffff, 0),
+			Parent:    HANDLE_INGRESS,
+		},
+	}
+	if err := QdiscAdd(qdisc); err != nil {
+		t.Fatal(err)
+	}
+	qdiscs, err := SafeQdiscList(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(qdiscs) != 1 {
+		t.Fatal("Failed to add qdisc")
+	}
+	_, ok := qdiscs[0].(*Ingress)
+	if !ok {
+		t.Fatal("Qdisc is the wrong type")
+	}
+	classId := MakeHandle(1, 1)
+	chainVal := new(uint32)
+	*chainVal = 20
+	filter := &U32{
+		FilterAttrs: FilterAttrs{
+			LinkIndex: link.Attrs().Index,
+			Parent:    MakeHandle(0xffff, 0),
+			Priority:  1,
+			Protocol:  unix.ETH_P_IP,
+			Chain:     chainVal,
+		},
+		RedirIndex: redir.Attrs().Index,
+		ClassId:    classId,
+	}
+	if err := FilterAdd(filter); err != nil {
+		t.Fatal(err)
+	}
+	filters, err := FilterList(link, MakeHandle(0xffff, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 1 {
+		t.Fatal("Failed to add filter")
+	}
+	filterChain := filters[0].Attrs().Chain
+	if filterChain != nil && *filterChain != *chainVal {
+		t.Fatalf("Chain of the filter is the wrong value")
+	}
+	if err := FilterDel(filter); err != nil {
+		t.Fatal(err)
+	}
+	filters, err = FilterList(link, MakeHandle(0xffff, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 0 {
+		t.Fatal("Failed to remove filter")
+	}
+	if err := QdiscDel(qdisc); err != nil {
+		t.Fatal(err)
+	}
+	qdiscs, err = SafeQdiscList(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(qdiscs) != 0 {
 		t.Fatal("Failed to remove qdisc")
 	}
 }

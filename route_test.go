@@ -6,6 +6,7 @@ package netlink
 import (
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -49,6 +50,14 @@ func TestRouteAddDel(t *testing.T) {
 		t.Fatal("Route not added properly")
 	}
 
+	routes, err = RouteList(nil, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 {
+		t.Fatal("Route not listed properly")
+	}
+
 	dstIP := net.IPv4(192, 168, 0, 42)
 	routeToDstIP, err := RouteGet(dstIP)
 	if err != nil {
@@ -69,6 +78,80 @@ func TestRouteAddDel(t *testing.T) {
 		t.Fatal("Route not removed properly")
 	}
 
+	// add default route test
+	// equiv: default dev lo
+	_, defaultDst, _ := net.ParseCIDR("0.0.0.0/0")
+	route = Route{Dst: defaultDst, LinkIndex: link.Attrs().Index}
+	if err := RouteAdd(&route); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = RouteList(link, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 {
+		t.Fatal("Dev default route not listed properly")
+	}
+	if err := RouteDel(&routes[0]); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = RouteList(link, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 0 {
+		t.Fatal("Dev default route not removed properly")
+	}
+
+	// equiv: blackhole default
+	route = Route{Dst: defaultDst, Type: unix.RTN_BLACKHOLE, Family: FAMILY_V4}
+	if err := RouteAdd(&route); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = RouteList(nil, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("%+v", routes)
+
+	if len(routes) != 1 {
+		t.Fatal("Blackhole default route not listed properly")
+	}
+
+	if err := RouteDel(&routes[0]); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = RouteList(nil, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 0 {
+		t.Fatal("Blackhole default route not removed properly")
+	}
+
+	// equiv: prohibit default
+	route = Route{Dst: defaultDst, Type: unix.RTN_PROHIBIT}
+	if err := RouteAdd(&route); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = RouteList(nil, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 {
+		t.Fatal("Prohibit default route not listed properly")
+	}
+
+	if err := RouteDel(&routes[0]); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = RouteList(nil, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 0 {
+		t.Fatal("Prohibit default route not removed properly")
+	}
 }
 
 func TestRoute6AddDel(t *testing.T) {
@@ -127,7 +210,7 @@ func TestRoute6AddDel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// cleanup route and dummy interface created for the test
+	// cleanup route
 	if len(routeToDstIP) == 0 {
 		t.Fatal("Route not present")
 	}
@@ -141,8 +224,176 @@ func TestRoute6AddDel(t *testing.T) {
 	if len(routes) != nroutes {
 		t.Fatal("Route not removed properly")
 	}
+
+	// add a default link route
+	_, defaultDst, _ := net.ParseCIDR("::/0")
+	route = Route{LinkIndex: link.Attrs().Index, Dst: defaultDst}
+	if err := RouteAdd(&route); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = RouteList(link, FAMILY_V6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != nroutes+1 {
+		t.Fatal("Default route not added properly")
+	}
+
+	// add a default link route
+	for _, route := range routes {
+		if route.Dst.String() == defaultDst.String() {
+			if err := RouteDel(&route); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	routes, err = RouteList(link, FAMILY_V6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != nroutes {
+		t.Fatal("Default route not removed properly")
+	}
+
+	// add blackhole default link route
+	routes, err = RouteList(nil, FAMILY_V6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nroutes = len(routes)
+
+	route = Route{Type: unix.RTN_BLACKHOLE, Dst: defaultDst}
+	if err := RouteAdd(&route); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = RouteList(nil, FAMILY_V6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != nroutes+1 {
+		t.Fatal("Blackhole default route not added properly")
+	}
+
+	// add blackhole default link route
+	for _, route := range routes {
+		if ipNetEqual(route.Dst, defaultDst) {
+			if err := RouteDel(&route); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	routes, err = RouteList(nil, FAMILY_V6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != nroutes {
+		t.Fatal("Blackhole default route not removed properly")
+	}
+
+	// add prohibit default link route
+	routes, err = RouteList(nil, FAMILY_V6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nroutes = len(routes)
+
+	route = Route{Type: unix.RTN_BLACKHOLE, Dst: defaultDst}
+	if err := RouteAdd(&route); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = RouteList(nil, FAMILY_V6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != nroutes+1 {
+		t.Fatal("Prohibit default route not added properly")
+	}
+
+	// add prohibit default link route
+	for _, route := range routes {
+		if ipNetEqual(route.Dst, defaultDst) {
+			if err := RouteDel(&route); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	routes, err = RouteList(nil, FAMILY_V6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != nroutes {
+		t.Fatal("Prohibit default route not removed properly")
+	}
+
+	// cleanup dummy interface created for the test
 	if err := LinkDel(link); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRouteChange(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+
+	// get loopback interface
+	link, err := LinkByName("lo")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// bring the interface up
+	if err := LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+
+	// add a gateway route
+	dst := &net.IPNet{
+		IP:   net.IPv4(192, 168, 0, 0),
+		Mask: net.CIDRMask(24, 32),
+	}
+
+	ip := net.IPv4(127, 1, 1, 1)
+	route := Route{LinkIndex: link.Attrs().Index, Dst: dst, Src: ip}
+
+	if err := RouteChange(&route); err == nil {
+		t.Fatal("Route added while it should fail")
+	}
+
+	if err := RouteAdd(&route); err != nil {
+		t.Fatal(err)
+	}
+	routes, err := RouteList(link, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 {
+		t.Fatal("Route not added properly")
+	}
+
+	ip = net.IPv4(127, 1, 1, 2)
+	route = Route{LinkIndex: link.Attrs().Index, Dst: dst, Src: ip}
+	if err := RouteChange(&route); err != nil {
+		t.Fatal(err)
+	}
+
+	routes, err = RouteList(link, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(routes) != 1 || !routes[0].Src.Equal(ip) {
+		t.Fatal("Route not changed properly")
+	}
+
+	if err := RouteDel(&route); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = RouteList(link, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 0 {
+		t.Fatal("Route not removed properly")
 	}
 }
 
@@ -205,7 +456,6 @@ func TestRouteReplace(t *testing.T) {
 	if len(routes) != 0 {
 		t.Fatal("Route not removed properly")
 	}
-
 }
 
 func TestRouteAppend(t *testing.T) {
@@ -293,13 +543,14 @@ func TestRouteAddIncomplete(t *testing.T) {
 	}
 }
 
-// expectNeighUpdate returns whether the expected updated is received within one minute.
-func expectRouteUpdate(ch <-chan RouteUpdate, t uint16, dst net.IP) bool {
+// expectRouteUpdate returns whether the expected updated is received within one minute.
+func expectRouteUpdate(ch <-chan RouteUpdate, t, f uint16, dst net.IP) bool {
 	for {
 		timeout := time.After(time.Minute)
 		select {
 		case update := <-ch:
 			if update.Type == t &&
+				update.NlFlags == f &&
 				update.Route.Dst != nil &&
 				update.Route.Dst.IP.Equal(dst) {
 				return true
@@ -344,13 +595,13 @@ func TestRouteSubscribe(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !expectRouteUpdate(ch, unix.RTM_NEWROUTE, dst.IP) {
+	if !expectRouteUpdate(ch, unix.RTM_NEWROUTE, unix.NLM_F_EXCL|unix.NLM_F_CREATE, dst.IP) {
 		t.Fatal("Add update not received as expected")
 	}
 	if err := RouteDel(&route); err != nil {
 		t.Fatal(err)
 	}
-	if !expectRouteUpdate(ch, unix.RTM_DELROUTE, dst.IP) {
+	if !expectRouteUpdate(ch, unix.RTM_DELROUTE, 0, dst.IP) {
 		t.Fatal("Del update not received as expected")
 	}
 }
@@ -399,7 +650,7 @@ func TestRouteSubscribeWithOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !expectRouteUpdate(ch, unix.RTM_NEWROUTE, dst.IP) {
+	if !expectRouteUpdate(ch, unix.RTM_NEWROUTE, unix.NLM_F_EXCL|unix.NLM_F_CREATE, dst.IP) {
 		t.Fatal("Add update not received as expected")
 	}
 }
@@ -451,13 +702,13 @@ func TestRouteSubscribeAt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !expectRouteUpdate(ch, unix.RTM_NEWROUTE, dst.IP) {
+	if !expectRouteUpdate(ch, unix.RTM_NEWROUTE, unix.NLM_F_EXCL|unix.NLM_F_CREATE, dst.IP) {
 		t.Fatal("Add update not received as expected")
 	}
 	if err := nh.RouteDel(&route); err != nil {
 		t.Fatal(err)
 	}
-	if !expectRouteUpdate(ch, unix.RTM_DELROUTE, dst.IP) {
+	if !expectRouteUpdate(ch, unix.RTM_DELROUTE, 0, dst.IP) {
 		t.Fatal("Del update not received as expected")
 	}
 }
@@ -512,7 +763,7 @@ func TestRouteSubscribeListExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !expectRouteUpdate(ch, unix.RTM_NEWROUTE, dst10.IP) {
+	if !expectRouteUpdate(ch, unix.RTM_NEWROUTE, 0, dst10.IP) {
 		t.Fatal("Existing add update not received as expected")
 	}
 
@@ -527,19 +778,19 @@ func TestRouteSubscribeListExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !expectRouteUpdate(ch, unix.RTM_NEWROUTE, dst.IP) {
+	if !expectRouteUpdate(ch, unix.RTM_NEWROUTE, unix.NLM_F_EXCL|unix.NLM_F_CREATE, dst.IP) {
 		t.Fatal("Add update not received as expected")
 	}
 	if err := nh.RouteDel(&route); err != nil {
 		t.Fatal(err)
 	}
-	if !expectRouteUpdate(ch, unix.RTM_DELROUTE, dst.IP) {
+	if !expectRouteUpdate(ch, unix.RTM_DELROUTE, 0, dst.IP) {
 		t.Fatal("Del update not received as expected")
 	}
 	if err := nh.RouteDel(&route10); err != nil {
 		t.Fatal(err)
 	}
-	if !expectRouteUpdate(ch, unix.RTM_DELROUTE, dst10.IP) {
+	if !expectRouteUpdate(ch, unix.RTM_DELROUTE, 0, dst10.IP) {
 		t.Fatal("Del update not received as expected")
 	}
 }
@@ -575,7 +826,7 @@ func TestRouteFilterAllTables(t *testing.T) {
 			Priority:  13,
 			Table:     table,
 			Type:      unix.RTN_UNICAST,
-			Tos:       14,
+			Tos:       12,
 			Hoplimit:  100,
 			Realm:     328,
 		}
@@ -589,7 +840,7 @@ func TestRouteFilterAllTables(t *testing.T) {
 		Scope:    unix.RT_SCOPE_LINK,
 		Table:    unix.RT_TABLE_UNSPEC,
 		Type:     unix.RTN_UNICAST,
-		Tos:      14,
+		Tos:      12,
 		Hoplimit: 100,
 		Realm:    328,
 	}, RT_FILTER_DST|RT_FILTER_SRC|RT_FILTER_SCOPE|RT_FILTER_TABLE|RT_FILTER_TYPE|RT_FILTER_TOS|RT_FILTER_HOPLIMIT|RT_FILTER_REALM)
@@ -613,7 +864,7 @@ func TestRouteFilterAllTables(t *testing.T) {
 		if route.Type != unix.RTN_UNICAST {
 			t.Fatal("Invalid Type. Route not added properly")
 		}
-		if route.Tos != 14 {
+		if route.Tos != 12 {
 			t.Fatal("Invalid Tos. Route not added properly")
 		}
 		if route.Hoplimit != 100 {
@@ -623,6 +874,224 @@ func TestRouteFilterAllTables(t *testing.T) {
 			t.Fatal("Invalid Realm. Route not added properly")
 		}
 	}
+}
+
+func TestRouteFilterByFamily(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+
+	const table int = 999
+
+	// get loopback interface
+	link, err := LinkByName("lo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// bring the interface up
+	if err = LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+
+	// add a IPv4 gateway route
+	dst4 := &net.IPNet{
+		IP:   net.IPv4(2, 2, 0, 0),
+		Mask: net.CIDRMask(24, 32),
+	}
+	route4 := Route{LinkIndex: link.Attrs().Index, Dst: dst4, Table: table}
+	if err := RouteAdd(&route4); err != nil {
+		t.Fatal(err)
+	}
+
+	// add a IPv6 gateway route
+	dst6 := &net.IPNet{
+		IP:   net.ParseIP("2001:db9::0"),
+		Mask: net.CIDRMask(64, 128),
+	}
+	route6 := Route{LinkIndex: link.Attrs().Index, Dst: dst6, Table: table}
+	if err := RouteAdd(&route6); err != nil {
+		t.Fatal(err)
+	}
+
+	// Get routes for both families
+	routes_all, err := RouteListFiltered(FAMILY_ALL, &Route{Table: table}, RT_FILTER_TABLE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes_all) != 2 {
+		t.Fatal("Filtering by FAMILY_ALL doesn't find two routes")
+	}
+
+	// Get IPv4 route
+	routes_v4, err := RouteListFiltered(FAMILY_V4, &Route{Table: table}, RT_FILTER_TABLE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes_v4) != 1 {
+		t.Fatal("Filtering by FAMILY_V4 doesn't find one route")
+	}
+
+	// Get IPv6 route
+	routes_v6, err := RouteListFiltered(FAMILY_V6, &Route{Table: table}, RT_FILTER_TABLE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes_v6) != 1 {
+		t.Fatal("Filtering by FAMILY_V6 doesn't find one route")
+	}
+
+	// Get non-existent routes
+	routes_non_existent, err := RouteListFiltered(99, &Route{Table: table}, RT_FILTER_TABLE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes_non_existent) != 0 {
+		t.Fatal("Filtering by non-existent family find some route")
+	}
+}
+
+func TestRouteFilterIterCanStop(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+
+	// get loopback interface
+	link, err := LinkByName("lo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// bring the interface up
+	if err = LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+
+	// add a gateway route
+	dst := &net.IPNet{
+		IP:   net.IPv4(1, 1, 1, 1),
+		Mask: net.CIDRMask(32, 32),
+	}
+
+	for i := 0; i < 3; i++ {
+		route := Route{
+			LinkIndex: link.Attrs().Index,
+			Dst:       dst,
+			Scope:     unix.RT_SCOPE_LINK,
+			Priority:  1 + i,
+			Table:     1000,
+			Type:      unix.RTN_UNICAST,
+		}
+		if err := RouteAdd(&route); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var routes []Route
+	err = RouteListFilteredIter(FAMILY_V4, &Route{
+		Dst:   dst,
+		Scope: unix.RT_SCOPE_LINK,
+		Table: 1000,
+		Type:  unix.RTN_UNICAST,
+	}, RT_FILTER_TABLE, func(route Route) (cont bool) {
+		routes = append(routes, route)
+		return len(routes) < 2
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 2 {
+		t.Fatal("Unexpected number of iterations")
+	}
+	for _, route := range routes {
+		if route.Scope != unix.RT_SCOPE_LINK {
+			t.Fatal("Invalid Scope. Route not added properly")
+		}
+		if route.Priority < 1 || route.Priority > 3 {
+			t.Fatal("Priority outside expected range. Route not added properly")
+		}
+		if route.Table != 1000 {
+			t.Fatalf("Invalid Table %d. Route not added properly", route.Table)
+		}
+		if route.Type != unix.RTN_UNICAST {
+			t.Fatal("Invalid Type. Route not added properly")
+		}
+	}
+}
+
+func BenchmarkRouteListFilteredNew(b *testing.B) {
+	tearDown := setUpNetlinkTest(b)
+	defer tearDown()
+
+	link, err := setUpRoutesBench(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	var routes []Route
+	for i := 0; i < b.N; i++ {
+		routes, err = pkgHandle.RouteListFiltered(FAMILY_V4, &Route{
+			LinkIndex: link.Attrs().Index,
+		}, RT_FILTER_OIF)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(routes) != 65535 {
+			b.Fatal("Incorrect number of routes.", len(routes))
+		}
+	}
+	runtime.KeepAlive(routes)
+}
+
+func BenchmarkRouteListIter(b *testing.B) {
+	tearDown := setUpNetlinkTest(b)
+	defer tearDown()
+
+	link, err := setUpRoutesBench(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		var routes int
+		err = RouteListFilteredIter(FAMILY_V4, &Route{
+			LinkIndex: link.Attrs().Index,
+		}, RT_FILTER_OIF, func(route Route) (cont bool) {
+			routes++
+			return true
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+		if routes != 65535 {
+			b.Fatal("Incorrect number of routes.", routes)
+		}
+	}
+}
+
+func setUpRoutesBench(b *testing.B) (Link, error) {
+	// get loopback interface
+	link, err := LinkByName("lo")
+	if err != nil {
+		b.Fatal(err)
+	}
+	// bring the interface up
+	if err = LinkSetUp(link); err != nil {
+		b.Fatal(err)
+	}
+
+	// add a gateway route
+	for i := 0; i < 65535; i++ {
+		dst := &net.IPNet{
+			IP:   net.IPv4(1, 1, byte(i>>8), byte(i&0xff)),
+			Mask: net.CIDRMask(32, 32),
+		}
+		route := Route{
+			LinkIndex: link.Attrs().Index,
+			Dst:       dst,
+			Scope:     unix.RT_SCOPE_LINK,
+			Priority:  10,
+			Type:      unix.RTN_UNICAST,
+		}
+		if err := RouteAdd(&route); err != nil {
+			b.Fatal(err)
+		}
+	}
+	return link, err
 }
 
 func tableIDIn(ids []int, id int) bool {
@@ -663,7 +1132,7 @@ func TestRouteExtraFields(t *testing.T) {
 		Priority:  13,
 		Table:     unix.RT_TABLE_MAIN,
 		Type:      unix.RTN_UNICAST,
-		Tos:       14,
+		Tos:       12,
 		Hoplimit:  100,
 		Realm:     239,
 	}
@@ -676,7 +1145,7 @@ func TestRouteExtraFields(t *testing.T) {
 		Scope:    unix.RT_SCOPE_LINK,
 		Table:    unix.RT_TABLE_MAIN,
 		Type:     unix.RTN_UNICAST,
-		Tos:      14,
+		Tos:      12,
 		Hoplimit: 100,
 		Realm:    239,
 	}, RT_FILTER_DST|RT_FILTER_SRC|RT_FILTER_SCOPE|RT_FILTER_TABLE|RT_FILTER_TYPE|RT_FILTER_TOS|RT_FILTER_HOPLIMIT|RT_FILTER_REALM)
@@ -699,7 +1168,7 @@ func TestRouteExtraFields(t *testing.T) {
 	if routes[0].Type != unix.RTN_UNICAST {
 		t.Fatal("Invalid Type. Route not added properly")
 	}
-	if routes[0].Tos != 14 {
+	if routes[0].Tos != 12 {
 		t.Fatal("Invalid Tos. Route not added properly")
 	}
 	if routes[0].Hoplimit != 100 {
@@ -745,6 +1214,146 @@ func TestRouteMultiPath(t *testing.T) {
 	if len(routes[0].MultiPath) != 2 {
 		t.Fatal("MultiPath Route not added properly")
 	}
+}
+
+func TestRouteIifOption(t *testing.T) {
+	skipUnlessRoot(t)
+
+	runtime.LockOSThread()
+	t.Cleanup(runtime.UnlockOSThread)
+
+	rootNs, err := netns.GetFromPid(1)
+	if err != nil {
+		t.Fatalf("could not get root ns: %s", err)
+	}
+	t.Cleanup(func() { rootNs.Close() })
+
+	rootHdl, err := NewHandleAt(rootNs)
+	if err != nil {
+		t.Fatalf("could not create handle for root ns: %s", err)
+	}
+	t.Cleanup(func() { rootHdl.Close() })
+
+	// setup a veth pair across two namespaces
+	//   veth1 (2.2.2.3/24) <-> veth2 (2.2.2.4/24)
+
+	// peer ns for veth pair
+	ns, err := netns.New()
+	if err != nil {
+		t.Fatalf("could not create new ns: %s", err)
+	}
+	t.Cleanup(func() { ns.Close() })
+
+	l := &Veth{
+		LinkAttrs:     LinkAttrs{Name: "veth1"},
+		PeerName:      "veth2",
+		PeerNamespace: NsFd(ns),
+	}
+	if err = rootHdl.LinkAdd(l); err != nil {
+		t.Fatalf("could not add veth interface: %s", err)
+	}
+	t.Cleanup(func() { rootHdl.LinkDel(l) })
+
+	ve1, err := rootHdl.LinkByName("veth1")
+	if err != nil {
+		t.Fatalf("could not get link veth1: %s", err)
+	}
+
+	err = rootHdl.AddrAdd(ve1, &Addr{IPNet: &net.IPNet{IP: net.ParseIP("2.2.2.3"), Mask: net.CIDRMask(24, 32)}})
+	if err != nil {
+		t.Fatalf("could not set address for veth1: %s", err)
+	}
+
+	nh, err := NewHandleAt(ns)
+	if err != nil {
+		t.Fatalf("could not get handle for ns %+v: %s", ns, err)
+	}
+	t.Cleanup(func() { nh.Close() })
+
+	ve2, err := nh.LinkByName("veth2")
+	if err != nil {
+		t.Fatalf("could not get link veth2: %s", err)
+	}
+
+	err = nh.AddrAdd(ve2, &Addr{IPNet: &net.IPNet{IP: net.ParseIP("2.2.2.4"), Mask: net.CIDRMask(24, 32)}})
+	if err != nil {
+		t.Fatalf("could set address for veth2: %s", err)
+	}
+
+	if err = rootHdl.LinkSetUp(ve1); err != nil {
+		t.Fatalf("could not set veth1 up: %s", err)
+	}
+
+	if err = nh.LinkSetUp(ve2); err != nil {
+		t.Fatalf("could not set veth2 up: %s", err)
+	}
+
+	err = nh.RouteAdd(&Route{
+		Dst: &net.IPNet{
+			IP:   net.IPv4zero,
+			Mask: net.CIDRMask(0, 32),
+		},
+		Gw: net.ParseIP("2.2.2.3"),
+	})
+	if err != nil {
+		t.Fatalf("could not add default route to ns: %s", err)
+	}
+
+	// setup finished, now do the actual test
+
+	_, err = rootHdl.RouteGetWithOptions(net.ParseIP("8.8.8.8"), &RouteGetOptions{
+		SrcAddr: net.ParseIP("2.2.2.4"),
+	})
+	if err == nil {
+		t.Fatal("route get should have resulted in error but did not")
+	}
+
+	testWithOptions := func(opts *RouteGetOptions) {
+		routes, err := rootHdl.RouteGetWithOptions(net.ParseIP("8.8.8.8"), opts)
+		if err != nil {
+			t.Fatalf("could not get route: %s", err)
+		}
+		if len(routes) != 1 {
+			t.Fatalf("did not get exactly one route, routes: %+v", routes)
+		}
+
+		// should be the default route
+		r, err := rootHdl.RouteGet(net.ParseIP("8.8.8.8"))
+		if err != nil {
+			t.Fatalf("could not get default route for 8.8.8.8: %s", err)
+		}
+		if len(r) != 1 {
+			t.Fatalf("did not get exactly one route, routes: %+v", routes)
+		}
+		if !routes[0].Gw.Equal(r[0].Gw) {
+			t.Fatalf("wrong gateway in route: expected: %s, got: %s", r[0].Gw, routes[0].Gw)
+		}
+		if routes[0].LinkIndex != r[0].LinkIndex {
+			t.Fatalf("wrong link in route: expected: %d, got: %d", r[0].LinkIndex, routes[0].LinkIndex)
+		}
+	}
+
+	t.Run("with iif", func(t *testing.T) {
+		testWithOptions(&RouteGetOptions{
+			SrcAddr: net.ParseIP("2.2.2.4"),
+			Iif:     "veth1",
+		})
+	})
+
+	t.Run("with iifIndex", func(t *testing.T) {
+		testWithOptions(&RouteGetOptions{
+			SrcAddr:  net.ParseIP("2.2.2.4"),
+			IifIndex: ve1.Attrs().Index,
+		})
+	})
+
+	t.Run("with iif and iifIndex", func(t *testing.T) {
+		testWithOptions(&RouteGetOptions{
+			SrcAddr:  net.ParseIP("2.2.2.4"),
+			Iif:      "veth1",
+			IifIndex: ve2.Attrs().Index, // Iif will supersede here
+		})
+	})
 }
 
 func TestRouteOifOption(t *testing.T) {
@@ -968,6 +1577,66 @@ func TestMPLSRouteAddDel(t *testing.T) {
 
 }
 
+func TestIP6tnlRouteAddDel(t *testing.T) {
+	_, err := RouteList(nil, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+
+	// get loopback interface
+	link, err := LinkByName("lo")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// bring the interface up
+	if err := LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+
+	_, dst, err := net.ParseCIDR("192.168.99.0/24")
+	if err != nil {
+		t.Fatalf("cannot parse destination prefix: %v", err)
+	}
+
+	encap := IP6tnlEncap{
+		Dst: net.ParseIP("2001:db8::"),
+		Src: net.ParseIP("::"),
+	}
+
+	route := &Route{
+		LinkIndex: link.Attrs().Index,
+		Dst:       dst,
+		Encap:     &encap,
+	}
+
+	if err := RouteAdd(route); err != nil {
+		t.Fatalf("Cannot add route: %v", err)
+	}
+	routes, err := RouteList(link, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 {
+		t.Fatal("Route not added properly")
+	}
+
+	if err := RouteDel(route); err != nil {
+		t.Fatal(err)
+	}
+	routes, err = RouteList(link, FAMILY_V4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 0 {
+		t.Fatal("Route not removed properly")
+	}
+
+}
+
 func TestRouteEqual(t *testing.T) {
 	mplsDst := 100
 	seg6encap := &SEG6Encap{Mode: nl.SEG6_IPTUN_MODE_ENCAP}
@@ -1064,7 +1733,7 @@ func TestRouteEqual(t *testing.T) {
 			Priority: 13,
 			Table:    unix.RT_TABLE_MAIN,
 			Type:     unix.RTN_UNICAST,
-			Tos:      14,
+			Tos:      12,
 		},
 		{
 			LinkIndex: 3,
@@ -1243,6 +1912,9 @@ func TestSEG6LocalEqual(t *testing.T) {
 	var flags_end_b6_encaps [nl.SEG6_LOCAL_MAX]bool
 	flags_end_b6_encaps[nl.SEG6_LOCAL_ACTION] = true
 	flags_end_b6_encaps[nl.SEG6_LOCAL_SRH] = true
+	var flags_end_bpf [nl.SEG6_LOCAL_MAX]bool
+	flags_end_bpf[nl.SEG6_LOCAL_ACTION] = true
+	flags_end_bpf[nl.SEG6_LOCAL_BPF] = true
 
 	cases := []SEG6LocalEncap{
 		{
@@ -1295,6 +1967,15 @@ func TestSEG6LocalEqual(t *testing.T) {
 			Segments: segs,
 		},
 	}
+
+	// SEG6_LOCAL_ACTION_END_BPF
+	endBpf := SEG6LocalEncap{
+		Flags:  flags_end_bpf,
+		Action: nl.SEG6_LOCAL_ACTION_END_BPF,
+	}
+	_ = endBpf.SetProg(1, "firewall")
+	cases = append(cases, endBpf)
+
 	for i1 := range cases {
 		for i2 := range cases {
 			got := cases[i1].Equal(&cases[i2])
@@ -1642,5 +2323,305 @@ func TestRouteViaAddDel(t *testing.T) {
 	}
 	if len(routes) != 0 {
 		t.Fatal("Route not removed properly")
+	}
+}
+
+func TestRouteUIDOption(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+
+	// setup eth0 so that network is reachable
+	err := LinkAdd(&Dummy{LinkAttrs{Name: "eth0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := LinkByName("eth0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+	addr := &Addr{
+		IPNet: &net.IPNet{
+			IP:   net.IPv4(192, 168, 1, 1),
+			Mask: net.CIDRMask(16, 32),
+		},
+	}
+	if err = AddrAdd(link, addr); err != nil {
+		t.Fatal(err)
+	}
+
+	// a table different than unix.RT_TABLE_MAIN
+	testtable := 1000
+
+	gw1 := net.IPv4(192, 168, 1, 254)
+	gw2 := net.IPv4(192, 168, 2, 254)
+
+	// add default route via gw1 (in main route table by default)
+	defaultRouteMain := Route{
+		Dst: nil,
+		Gw:  gw1,
+	}
+	if err := RouteAdd(&defaultRouteMain); err != nil {
+		t.Fatal(err)
+	}
+
+	// add default route via gw2 in test route table
+	defaultRouteTest := Route{
+		Dst:   nil,
+		Gw:    gw2,
+		Table: testtable,
+	}
+	if err := RouteAdd(&defaultRouteTest); err != nil {
+		t.Fatal(err)
+	}
+
+	// check the routes are in different tables
+	routes, err := RouteListFiltered(FAMILY_V4, &Route{
+		Dst:   nil,
+		Table: unix.RT_TABLE_UNSPEC,
+	}, RT_FILTER_DST|RT_FILTER_TABLE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 2 || routes[0].Table == routes[1].Table {
+		t.Fatal("Routes not added properly")
+	}
+
+	// add a rule that uidrange match should result in route lookup of test table for uid other than current
+	// current uid is 0 due to skipUnlessRoot()
+	var uid uint32 = 1000
+	rule := NewRule()
+	rule.UIDRange = NewRuleUIDRange(uid, uid)
+	rule.Table = testtable
+	if err := RuleAdd(rule); err != nil {
+		t.Fatal(err)
+	}
+
+	dstIP := net.IPv4(10, 1, 1, 1)
+
+	// check getting route without UID option
+	routes, err = RouteGetWithOptions(dstIP, &RouteGetOptions{UID: nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// current uid is outside uidrange; rule does not apply; lookup main table
+	if len(routes) != 1 || !routes[0].Gw.Equal(gw1) {
+		t.Fatal(routes)
+	}
+
+	// check getting route with UID option
+	routes, err = RouteGetWithOptions(dstIP, &RouteGetOptions{UID: &uid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// option uid is within uidrange; rule applies; lookup test table
+	if len(routes) != 1 || !routes[0].Gw.Equal(gw2) {
+		t.Fatal(routes)
+	}
+}
+
+func TestRouteFWMarkOption(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+
+	// setup eth0 so that network is reachable
+	err := LinkAdd(&Dummy{LinkAttrs{Name: "eth0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := LinkByName("eth0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+	addr := &Addr{
+		IPNet: &net.IPNet{
+			IP:   net.IPv4(192, 168, 1, 1),
+			Mask: net.CIDRMask(16, 32),
+		},
+	}
+	if err = AddrAdd(link, addr); err != nil {
+		t.Fatal(err)
+	}
+
+	// a table different than unix.RT_TABLE_MAIN
+	testTable0 := 254
+	testTable1 := 1000
+	testTable2 := 1001
+
+	gw0 := net.IPv4(192, 168, 1, 254)
+	gw1 := net.IPv4(192, 168, 2, 254)
+	gw2 := net.IPv4(192, 168, 3, 254)
+
+	// add default route via gw0 (in main route table by default)
+	defaultRouteMain := Route{
+		Dst:   nil,
+		Gw:    gw0,
+		Table: testTable0,
+	}
+	if err := RouteAdd(&defaultRouteMain); err != nil {
+		t.Fatal(err)
+	}
+
+	// add default route via gw1 in test route table
+	defaultRouteTest1 := Route{
+		Dst:   nil,
+		Gw:    gw1,
+		Table: testTable1,
+	}
+	if err := RouteAdd(&defaultRouteTest1); err != nil {
+		t.Fatal(err)
+	}
+
+	// add default route via gw2 in test route table
+	defaultRouteTest2 := Route{
+		Dst:   nil,
+		Gw:    gw2,
+		Table: testTable2,
+	}
+	if err := RouteAdd(&defaultRouteTest2); err != nil {
+		t.Fatal(err)
+	}
+
+	// check the routes are in different tables
+	routes, err := RouteListFiltered(FAMILY_V4, &Route{
+		Dst:   nil,
+		Table: unix.RT_TABLE_UNSPEC,
+	}, RT_FILTER_DST|RT_FILTER_TABLE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 3 || routes[0].Table == routes[1].Table || routes[1].Table == routes[2].Table ||
+		routes[0].Table == routes[2].Table {
+		t.Fatal("Routes not added properly")
+	}
+
+	// add a rule that fwmark match should result in route lookup of test table
+	fwmark1 := uint32(0xAFFFFFFF)
+	fwmark2 := uint32(0xBFFFFFFF)
+
+	rule := NewRule()
+	rule.Mark = fwmark1
+	rule.Mask = &[]uint32{0xFFFFFFFF}[0]
+
+	rule.Table = testTable1
+	if err := RuleAdd(rule); err != nil {
+		t.Fatal(err)
+	}
+
+	rule = NewRule()
+	rule.Mark = fwmark2
+	rule.Mask = &[]uint32{0xFFFFFFFF}[0]
+	rule.Table = testTable2
+	if err := RuleAdd(rule); err != nil {
+		t.Fatal(err)
+	}
+
+	rules, err := RuleListFiltered(FAMILY_V4, &Rule{Mark: fwmark1}, RT_FILTER_MARK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 || rules[0].Table != testTable1 || rules[0].Mark != fwmark1 {
+		t.Fatal("Rules not added properly")
+	}
+
+	rules, err = RuleListFiltered(FAMILY_V4, &Rule{Mark: fwmark2}, RT_FILTER_MARK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 1 || rules[0].Table != testTable2 || rules[0].Mark != fwmark2 {
+		t.Fatal("Rules not added properly")
+	}
+
+	dstIP := net.IPv4(10, 1, 1, 1)
+
+	// check getting route without FWMark option
+	routes, err = RouteGetWithOptions(dstIP, &RouteGetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || !routes[0].Gw.Equal(gw0) {
+		t.Fatal(routes)
+	}
+
+	// check getting route with FWMark option
+	routes, err = RouteGetWithOptions(dstIP, &RouteGetOptions{Mark: fwmark1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || !routes[0].Gw.Equal(gw1) {
+		t.Fatal(routes)
+	}
+
+	// check getting route with FWMark option
+	routes, err = RouteGetWithOptions(dstIP, &RouteGetOptions{Mark: fwmark2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || !routes[0].Gw.Equal(gw2) {
+		t.Fatal(routes)
+	}
+}
+
+func TestRouteGetFIBMatchOption(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+
+	err := LinkAdd(&Dummy{LinkAttrs{Name: "eth0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := LinkByName("eth0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = LinkSetUp(link); err != nil {
+		t.Fatal(err)
+	}
+	addr := &Addr{
+		IPNet: &net.IPNet{
+			IP:   net.IPv4(192, 168, 0, 2),
+			Mask: net.CIDRMask(24, 32),
+		},
+	}
+	if err = AddrAdd(link, addr); err != nil {
+		t.Fatal(err)
+	}
+
+	route := &Route{
+		LinkIndex: link.Attrs().Index,
+		Gw:        net.IPv4(192, 168, 1, 1),
+		Dst: &net.IPNet{
+			IP:   net.IPv4(192, 168, 2, 0),
+			Mask: net.CIDRMask(24, 32),
+		},
+		Flags: int(FLAG_ONLINK),
+	}
+
+	err = RouteAdd(route)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	routes, err := RouteGetWithOptions(net.IPv4(192, 168, 2, 1), &RouteGetOptions{FIBMatch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(routes) != 1 {
+		t.Fatalf("More than one route matched %v", routes)
+	}
+
+	if len(routes[0].ListFlags()) != 1 {
+		t.Fatalf("More than one route flag returned %v", routes[0].ListFlags())
+	}
+
+	flag := routes[0].ListFlags()[0]
+	if flag != "onlink" {
+		t.Fatalf("Unexpected flag %s returned", flag)
 	}
 }

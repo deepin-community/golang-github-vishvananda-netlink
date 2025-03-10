@@ -95,7 +95,7 @@ func TestIpsetCreateListAddDelDestroy(t *testing.T) {
 		Replace:  true,
 		Timeout:  &timeout,
 		Counters: true,
-		Comments: false,
+		Comments: true,
 		Skbinfo:  false,
 	})
 	if err != nil {
@@ -143,14 +143,35 @@ func TestIpsetCreateListAddDelDestroy(t *testing.T) {
 		t.Errorf("expected timeout to be 3, but got '%d'", *results[0].Timeout)
 	}
 
+	ip := net.ParseIP("10.99.99.99")
+	exist, err := IpsetTest("my-test-ipset-1", &IPSetEntry{
+		IP: ip,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exist {
+		t.Errorf("entry should not exist before being added: %s", ip.String())
+	}
+
 	err = IpsetAdd("my-test-ipset-1", &IPSetEntry{
 		Comment: "test comment",
-		IP:      net.ParseIP("10.99.99.99").To4(),
+		IP:      ip,
 		Replace: false,
 	})
 
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	exist, err = IpsetTest("my-test-ipset-1", &IPSetEntry{
+		IP: ip,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exist {
+		t.Errorf("entry should exist after being added: %s", ip.String())
 	}
 
 	result, err := IpsetList("my-test-ipset-1")
@@ -173,7 +194,7 @@ func TestIpsetCreateListAddDelDestroy(t *testing.T) {
 
 	err = IpsetDel("my-test-ipset-1", &IPSetEntry{
 		Comment: "test comment",
-		IP:      net.ParseIP("10.99.99.99").To4(),
+		IP:      net.ParseIP("10.99.99.99"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -219,12 +240,12 @@ func TestIpsetCreateListAddDelDestroyWithTestCases(t *testing.T) {
 				Replace:  true,
 				Timeout:  &timeout,
 				Counters: true,
-				Comments: false,
+				Comments: true,
 				Skbinfo:  false,
 			},
 			entry: &IPSetEntry{
 				Comment: "test comment",
-				IP:      net.ParseIP("10.99.99.99").To4(),
+				IP:      net.ParseIP("10.99.99.99"),
 				Replace: false,
 			},
 		},
@@ -241,7 +262,7 @@ func TestIpsetCreateListAddDelDestroyWithTestCases(t *testing.T) {
 			},
 			entry: &IPSetEntry{
 				Comment: "test comment",
-				IP:      net.ParseIP("10.99.99.0").To4(),
+				IP:      net.ParseIP("10.99.99.0"),
 				CIDR:    24,
 				Replace: false,
 			},
@@ -259,9 +280,9 @@ func TestIpsetCreateListAddDelDestroyWithTestCases(t *testing.T) {
 			},
 			entry: &IPSetEntry{
 				Comment: "test comment",
-				IP:      net.ParseIP("10.99.99.0").To4(),
+				IP:      net.ParseIP("10.99.99.0"),
 				CIDR:    24,
-				IP2:     net.ParseIP("10.99.0.0").To4(),
+				IP2:     net.ParseIP("10.99.0.0"),
 				CIDR2:   24,
 				Replace: false,
 			},
@@ -279,8 +300,8 @@ func TestIpsetCreateListAddDelDestroyWithTestCases(t *testing.T) {
 			},
 			entry: &IPSetEntry{
 				Comment: "test comment",
-				IP:      net.ParseIP("10.99.99.0").To4(),
-				IP2:     net.ParseIP("10.99.0.0").To4(),
+				IP:      net.ParseIP("10.99.99.0"),
+				IP2:     net.ParseIP("10.99.0.0"),
 				Replace: false,
 			},
 		},
@@ -297,7 +318,7 @@ func TestIpsetCreateListAddDelDestroyWithTestCases(t *testing.T) {
 			},
 			entry: &IPSetEntry{
 				Comment:  "test comment",
-				IP:       net.ParseIP("10.99.99.1").To4(),
+				IP:       net.ParseIP("10.99.99.1"),
 				Protocol: &protocalTCP,
 				Port:     &port,
 				Replace:  false,
@@ -316,9 +337,9 @@ func TestIpsetCreateListAddDelDestroyWithTestCases(t *testing.T) {
 			},
 			entry: &IPSetEntry{
 				Comment:  "test comment",
-				IP:       net.ParseIP("10.99.99.0").To4(),
+				IP:       net.ParseIP("10.99.99.0"),
 				CIDR:     24,
-				IP2:      net.ParseIP("10.99.0.0").To4(),
+				IP2:      net.ParseIP("10.99.0.0"),
 				CIDR2:    24,
 				Protocol: &protocalTCP,
 				Port:     &port,
@@ -333,7 +354,7 @@ func TestIpsetCreateListAddDelDestroyWithTestCases(t *testing.T) {
 				Replace:  true,
 				Timeout:  &timeout,
 				Counters: true,
-				Comments: false,
+				Comments: true,
 				Skbinfo:  false,
 			},
 			entry: &IPSetEntry{
@@ -350,12 +371,12 @@ func TestIpsetCreateListAddDelDestroyWithTestCases(t *testing.T) {
 				Replace:  true,
 				Timeout:  &timeout,
 				Counters: true,
-				Comments: false,
+				Comments: true,
 				Skbinfo:  false,
 			},
 			entry: &IPSetEntry{
 				Comment: "test comment",
-				IP:      net.ParseIP("10.99.99.0").To4(),
+				IP:      net.ParseIP("10.99.99.0"),
 				CIDR:    24,
 				IFace:   "eth0",
 				Replace: false,
@@ -369,13 +390,53 @@ func TestIpsetCreateListAddDelDestroyWithTestCases(t *testing.T) {
 				Replace:  true,
 				Timeout:  &timeout,
 				Counters: true,
-				Comments: false,
+				Comments: true,
 				Skbinfo:  false,
 			},
 			entry: &IPSetEntry{
 				Comment: "test comment",
-				IP:      net.ParseIP("10.99.99.0").To4(),
+				IP:      net.ParseIP("10.99.99.0"),
 				Mark:    &timeout,
+				Replace: false,
+			},
+		},
+		{
+			desc:     "Type-hash:net6",
+			setname:  "my-test-ipset-11",
+			typename: "hash:net",
+			options: IpsetCreateOptions{
+				Replace:  true,
+				Timeout:  &timeout,
+				Counters: false,
+				Comments: true,
+				Skbinfo:  true,
+				Family:   unix.AF_INET6,
+			},
+			entry: &IPSetEntry{
+				Comment: "test comment",
+				IP:      net.ParseIP("::1"),
+				CIDR:    128,
+				Replace: false,
+			},
+		},
+		{
+			desc:     "Type-hash:net6:net6",
+			setname:  "my-test-ipset-11",
+			typename: "hash:net,net",
+			options: IpsetCreateOptions{
+				Replace:  true,
+				Timeout:  &timeout,
+				Counters: false,
+				Comments: true,
+				Skbinfo:  true,
+				Family:   unix.AF_INET6,
+			},
+			entry: &IPSetEntry{
+				Comment: "test comment",
+				IP:      net.ParseIP("::1"),
+				CIDR:    128,
+				IP2:     net.ParseIP("::2"),
+				CIDR2:   128,
 				Replace: false,
 			},
 		},
@@ -413,6 +474,14 @@ func TestIpsetCreateListAddDelDestroyWithTestCases(t *testing.T) {
 			if err != nil {
 				t.Error(result.Protocol, result.Family)
 				t.Fatal(err)
+			}
+
+			exist, err := IpsetTest(tC.setname, tC.entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !exist {
+				t.Errorf("entry should exist, but 'test' got false, case: %s", tC.desc)
 			}
 
 			result, err = IpsetList(tC.setname)
@@ -486,6 +555,14 @@ func TestIpsetCreateListAddDelDestroyWithTestCases(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			exist, err = IpsetTest(tC.setname, tC.entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if exist {
+				t.Errorf("entry should be deleted, but 'test' got true, case: %s", tC.desc)
+			}
+
 			result, err = IpsetList(tC.setname)
 			if err != nil {
 				t.Fatal(err)
@@ -528,7 +605,7 @@ func TestIpsetBitmapCreateListWithTestCases(t *testing.T) {
 			},
 			entry: &IPSetEntry{
 				Comment: "test comment",
-				IP:      net.ParseIP("10.99.99.0").To4(),
+				IP:      net.ParseIP("10.99.99.0"),
 				CIDR:    26,
 				Mark:    &timeout,
 				Replace: false,
@@ -562,5 +639,123 @@ func TestIpsetBitmapCreateListWithTestCases(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+func TestIpsetSwap(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+
+	ipset1 := "my-test-ipset-swap-1"
+	ipset2 := "my-test-ipset-swap-2"
+
+	err := IpsetCreate(ipset1, "hash:ip", IpsetCreateOptions{
+		Replace: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = IpsetDestroy(ipset1)
+	}()
+
+	err = IpsetCreate(ipset2, "hash:ip", IpsetCreateOptions{
+		Replace: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = IpsetDestroy(ipset2)
+	}()
+
+	err = IpsetAdd(ipset1, &IPSetEntry{
+		IP: net.ParseIP("10.99.99.99"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertHasOneEntry := func(name string) {
+		result, err := IpsetList(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Entries) != 1 {
+			t.Fatalf("expected 1 entry be created, got '%d'", len(result.Entries))
+		}
+		if result.Entries[0].IP.String() != "10.99.99.99" {
+			t.Fatalf("expected entry to be '10.99.99.99', got '%s'", result.Entries[0].IP.String())
+		}
+	}
+
+	assertIsEmpty := func(name string) {
+		result, err := IpsetList(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Entries) != 0 {
+			t.Fatalf("expected 0 entry be created, got '%d'", len(result.Entries))
+		}
+	}
+
+	assertHasOneEntry(ipset1)
+	assertIsEmpty(ipset2)
+
+	err = IpsetSwap(ipset1, ipset2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertIsEmpty(ipset1)
+	assertHasOneEntry(ipset2)
+}
+
+func nextIP(ip net.IP) {
+	for j := len(ip) - 1; j >= 0; j-- {
+		ip[j]++
+		if ip[j] > 0 {
+			break
+		}
+	}
+}
+
+// TestIpsetMaxElements tests that we can create an ipset containing
+// 128k elements, which is double the default size (64k elements).
+func TestIpsetMaxElements(t *testing.T) {
+	tearDown := setUpNetlinkTest(t)
+	defer tearDown()
+
+	ipsetName := "my-test-ipset-max"
+	maxElements := uint32(128 << 10)
+
+	err := IpsetCreate(ipsetName, "hash:ip", IpsetCreateOptions{
+		Replace:     true,
+		MaxElements: maxElements,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = IpsetDestroy(ipsetName)
+	}()
+
+	ip := net.ParseIP("10.0.0.0")
+	for i := uint32(0); i < maxElements; i++ {
+		err = IpsetAdd(ipsetName, &IPSetEntry{
+			IP: ip,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		nextIP(ip)
+	}
+
+	result, err := IpsetList(ipsetName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != int(maxElements) {
+		t.Fatalf("expected '%d' entry be created, got '%d'", maxElements, len(result.Entries))
 	}
 }

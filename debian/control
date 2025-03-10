@@ -3,9 +3,9 @@ Section: golang
 Priority: optional
 Standards-Version: 4.6.0
 Maintainer: Debian Go Packaging Team <team+pkg-go@tracker.debian.org>
-Uploaders: Tianon Gravi <tianon@debian.org>,
-           Tim Potter <tpot@hpe.com>,
-           Dmitry Smirnov <onlyjob@debian.org>
+Uploaders: Tim Potter <tpot@hpe.com>,
+           Dmitry Smirnov <onlyjob@debian.org>,
+           John Goerzen <jgoerzen@complete.org>
 Build-Depends: debhelper-compat (= 13),
                dh-golang,
                golang-any,

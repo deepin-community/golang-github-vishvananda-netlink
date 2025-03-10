@@ -1,5 +1,3 @@
-// +build linux
-
 package netlink
 
 import (
@@ -195,6 +193,7 @@ func TestXfrmPolicyWithOptional(t *testing.T) {
 	defer setUpNetlinkTest(t)()
 
 	pol := getPolicy()
+	pol.Dir = XFRM_DIR_IN
 	pol.Tmpls[0].Optional = 1
 
 	if err := XfrmPolicyAdd(pol); err != nil {
@@ -280,7 +279,7 @@ func getPolicy() *XfrmPolicy {
 		Dst:   net.ParseIP("127.0.0.2"),
 		Proto: XFRM_PROTO_ESP,
 		Mode:  XFRM_MODE_TUNNEL,
-		Spi:   0xabcdef99,
+		Spi:   0x1bcdef99,
 	}
 	policy.Tmpls = append(policy.Tmpls, tmpl)
 	return policy
